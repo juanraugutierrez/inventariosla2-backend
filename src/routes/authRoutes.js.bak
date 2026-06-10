@@ -1,0 +1,97 @@
+
+import bcrypt from 'bcrypt';
+import jwt from 'jsonwebtoken';
+import { Roles } from '../utils/permissions.js';
+
+function getEnv(name, d = undefined) {
+  const v = process.env[name];
+  return v === undefined ? d : v;
+}
+
+export default function authRouter(prisma) {
+  const router = (await import('express')).default.Router();
+
+  const USER_MODEL = getEnv('AUTH_USER_MODEL', 'User'); // Debe existir tras prisma db pull
+  const EMAIL_FIELD = getEnv('AUTH_USER_EMAIL_FIELD', 'email');
+  const PASS_FIELD  = getEnv('AUTH_USER_PASSWORD_FIELD', 'passwordHash');
+  const ROLE_FIELD  = getEnv('AUTH_USER_ROLE_FIELD', 'role'); // si usas relación, deja vacío
+
+  const ROLE_MODEL = getEnv('AUTH_ROLE_MODEL');
+  const ROLE_NAME  = getEnv('AUTH_ROLE_NAME_FIELD', 'name');
+  const USER_ROLES_REL = getEnv('AUTH_USER_ROLES_RELATION'); // ej. 'roles'
+
+  function delegateFor(modelName) {
+    const key = modelName.slice(0,1).toLowerCase() + modelName.slice(1);
+    const d = prisma[key];
+    if (!d || typeof d.findFirst !== 'function') {
+      throw new Error(`Modelo Prisma no encontrado: ${modelName} (delegate ${key})`);
+    }
+    return d;
+  }
+
+  function extractRole(user) {
+    if (ROLE_FIELD) return user[ROLE_FIELD] || Roles.Viewer;
+    if (USER_ROLES_REL && Array.isArray(user[USER_ROLES_REL])) {
+      const r = user[USER_ROLES_REL][0];
+      if (r) return r[ROLE_NAME] || Roles.Viewer;
+    }
+    return Roles.Viewer;
+  }
+
+  router.post('/register', async (req, res) => {
+    try {
+      const { email, password, role } = req.body;
+      if (!email || !password) return res.status(400).json({ error: 'email y password requeridos' });
+      const d = delegateFor(USER_MODEL);
+      const exists = await d.findFirst({ where: { [EMAIL_FIELD]: email } });
+      if (exists) return res.status(409).json({ error: 'Usuario ya existe' });
+      const hash = await bcrypt.hash(password, 10);
+
+      let created;
+      if (ROLE_FIELD) {
+        created = await d.create({ data: { [EMAIL_FIELD]: email, [PASS_FIELD]: hash, [ROLE_FIELD]: role || Roles.Viewer } });
+      } else if (USER_ROLES_REL && ROLE_MODEL) {
+        const roleDelegate = delegateFor(ROLE_MODEL);
+        const targetRole = role || Roles.Viewer;
+        const roleRec = await roleDelegate.findFirst({ where: { [ROLE_NAME]: targetRole } });
+        if (!roleRec) return res.status(400).json({ error: `Rol '${targetRole}' no existe` });
+        created = await d.create({
+          data: {
+            [EMAIL_FIELD]: email,
+            [PASS_FIELD]: hash,
+            [USER_ROLES_REL]: { connect: [{ id: roleRec.id }] }
+          }
+        });
+      } else {
+        created = await d.create({ data: { [EMAIL_FIELD]: email, [PASS_FIELD]: hash } });
+      }
+
+      res.json({ id: created.id });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error registrando usuario' });
+    }
+  });
+
+  router.post('/login', async (req, res) => {
+    try {
+      const { email, password } = req.body;
+      if (!email || !password) return res.status(400).json({ error: 'email y password requeridos' });
+      const d = delegateFor(USER_MODEL);
+      const include = USER_ROLES_REL ? { [USER_ROLES_REL]: true } : undefined;
+      const user = await d.findFirst({ where: { [EMAIL_FIELD]: email }, include });
+      if (!user) return res.status(401).json({ error: 'Credenciales inválidas' });
+      const ok = await bcrypt.compare(password, user[PASS_FIELD] || '');
+      if (!ok) return res.status(401).json({ error: 'Credenciales inválidas' });
+
+      const role = extractRole(user);
+      const token = jwt.sign({ sub: user.id, email, role }, process.env.JWT_SECRET, { expiresIn: '8h' });
+      res.json({ token, role });
+    } catch (e) {
+      console.error(e);
+      res.status(500).json({ error: 'Error en login' });
+    }
+  });
+
+  return router;
+}

@@ -1,0 +1,176 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+model Perfil {
+  id                     Int       @id @default(autoincrement())
+  nombre                 String    @unique(map: "nombre") @db.VarChar(50)
+  descripcion            String?   @db.VarChar(255)
+  permiso_crear_bodega   Boolean   @default(false)
+  permiso_ingresar_stock Boolean   @default(false)
+  permiso_retirar_stock  Boolean   @default(false)
+  permiso_ver_informes   Boolean   @default(false)
+  creado_en              DateTime? @default(now()) @db.Timestamp(0)
+  usuarios               Usuario[]
+
+  @@map("perfiles")
+}
+
+model Usuario {
+  id              Int           @id @default(autoincrement())
+  rut_o_documento String        @unique(map: "rut_o_documento") @db.VarChar(20)
+  nombre_completo String        @db.VarChar(150)
+  email           String        @unique(map: "email") @db.VarChar(100)
+  password_hash   String        @db.VarChar(255)
+  perfil_id       Int
+  activo          Boolean       @default(true)
+  creado_en       DateTime?     @default(now()) @db.Timestamp(0)
+  bodegas_a_cargo Bodega[]      @relation("ResponsableBodega")
+  movimientos     movimientos[]
+  perfil          Perfil        @relation(fields: [perfil_id], references: [id], onUpdate: NoAction, map: "usuarios_ibfk_1")
+
+  @@index([perfil_id], map: "perfil_id")
+  @@map("usuarios")
+}
+
+model Articulo {
+  id                  Int                   @id @default(autoincrement())
+  codigo_sku          String                @unique(map: "codigo_sku") @db.VarChar(50)
+  nombre              String                @db.VarChar(150)
+  descripcion         String?               @db.Text
+  url_foto            String?               @db.LongText
+  subcategoria_id     Int
+  tipo_activo         TipoActivo
+  precio_promedio     Decimal               @default(0.00) @db.Decimal(12, 2)
+  creado_en           DateTime?             @default(now()) @db.Timestamp(0)
+  actualizado_en      DateTime?             @default(now()) @updatedAt @db.Timestamp(0)
+  subcategorias       subcategorias         @relation(fields: [subcategoria_id], references: [id], onUpdate: NoAction, map: "articulos_ibfk_1")
+  detalle_movimientos detalle_movimientos[]
+  stock_bodegas       stock_bodegas[]
+
+  @@index([tipo_activo], map: "idx_articulos_activo")
+  @@index([nombre], map: "idx_articulos_nombre")
+  @@index([subcategoria_id], map: "subcategoria_id")
+  @@map("articulos")
+}
+
+model Bodega {
+  id                                                 Int             @id @default(autoincrement())
+  nombre                                             String          @unique(map: "nombre") @db.VarChar(100)
+  direccion                                          String?         @db.VarChar(255)
+  es_central                                         Boolean         @default(false)
+  responsable_id                                     Int?
+  activa                                             Boolean         @default(true)
+  creado_en                                          DateTime?       @default(now()) @db.Timestamp(0)
+  actualizado_en                                     DateTime?       @default(now()) @db.Timestamp(0)
+  responsable                                        Usuario?        @relation("ResponsableBodega", fields: [responsable_id], references: [id], onUpdate: NoAction, map: "bodegas_ibfk_1")
+  movimientos_movimientos_bodega_origen_idTobodegas  movimientos[]   @relation("movimientos_bodega_origen_idTobodegas")
+  movimientos_movimientos_bodega_destino_idTobodegas movimientos[]   @relation("movimientos_bodega_destino_idTobodegas")
+  stock_bodegas                                      stock_bodegas[]
+
+  @@index([responsable_id], map: "responsable_id")
+  @@map("bodegas")
+}
+
+model categorias {
+  id            Int             @id @default(autoincrement())
+  nombre        String          @unique(map: "nombre") @db.VarChar(100)
+  descripcion   String?         @db.Text
+  creado_en     DateTime?       @default(now()) @db.Timestamp(0)
+  subcategorias subcategorias[]
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model detalle_movimientos {
+  id                        Int         @id @default(autoincrement())
+  movimiento_id             Int
+  articulo_id               Int
+  cantidad                  Int
+  precio_unitario_operacion Decimal     @db.Decimal(12, 2)
+  movimientos               movimientos @relation(fields: [movimiento_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "detalle_movimientos_ibfk_1")
+  articulos                 Articulo    @relation(fields: [articulo_id], references: [id], onUpdate: NoAction, map: "detalle_movimientos_ibfk_2")
+
+  @@index([articulo_id], map: "idx_detalle_articulo")
+  @@index([movimiento_id], map: "movimiento_id")
+}
+
+model documentos_soporte {
+  id                 Int                               @id @default(autoincrement())
+  tipo_documento     documentos_soporte_tipo_documento
+  numero_documento   String                            @db.VarChar(50)
+  fecha_emision      DateTime                          @db.Date
+  proveedor_o_emisor String?                           @db.VarChar(150)
+  creado_en          DateTime?                         @default(now()) @db.Timestamp(0)
+  movimientos        movimientos[]
+
+  @@unique([tipo_documento, numero_documento], map: "uq_tipo_numero")
+}
+
+model movimientos {
+  id                                             Int                         @id @default(autoincrement())
+  tipo_movimiento                                movimientos_tipo_movimiento
+  bodega_origen_id                               Int?
+  bodega_destino_id                              Int?
+  documento_soporte_id                           Int?
+  responsable_id                                 Int
+  fecha_movimiento                               DateTime?                   @default(now()) @db.Timestamp(0)
+  observaciones                                  String?                     @db.Text
+  detalle_movimientos                            detalle_movimientos[]
+  bodegas_movimientos_bodega_origen_idTobodegas  Bodega?                     @relation("movimientos_bodega_origen_idTobodegas", fields: [bodega_origen_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "movimientos_ibfk_1")
+  bodegas_movimientos_bodega_destino_idTobodegas Bodega?                     @relation("movimientos_bodega_destino_idTobodegas", fields: [bodega_destino_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "movimientos_ibfk_2")
+  documentos_soporte                             documentos_soporte?         @relation(fields: [documento_soporte_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "movimientos_ibfk_3")
+  usuarios                                       Usuario                     @relation(fields: [responsable_id], references: [id], onDelete: NoAction, onUpdate: NoAction, map: "movimientos_ibfk_4")
+
+  @@index([bodega_destino_id], map: "bodega_destino_id")
+  @@index([bodega_origen_id], map: "bodega_origen_id")
+  @@index([documento_soporte_id], map: "documento_soporte_id")
+  @@index([fecha_movimiento], map: "idx_movimientos_fecha")
+  @@index([responsable_id], map: "responsable_id")
+}
+
+/// This table contains check constraints and requires additional setup for migrations. Visit https://pris.ly/d/check-constraints for more info.
+model stock_bodegas {
+  bodega_id         Int
+  articulo_id       Int
+  cantidad_unidades Int      @default(0)
+  bodegas           Bodega   @relation(fields: [bodega_id], references: [id], onUpdate: NoAction, map: "stock_bodegas_ibfk_1")
+  articulos         Articulo @relation(fields: [articulo_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "stock_bodegas_ibfk_2")
+
+  @@id([bodega_id, articulo_id])
+  @@index([articulo_id], map: "articulo_id")
+}
+
+model subcategorias {
+  id           Int        @id @default(autoincrement())
+  categoria_id Int
+  nombre       String     @db.VarChar(100)
+  descripcion  String?    @db.Text
+  creado_en    DateTime?  @default(now()) @db.Timestamp(0)
+  articulos    Articulo[]
+  categorias   categorias @relation(fields: [categoria_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "subcategorias_ibfk_1")
+
+  @@unique([categoria_id, nombre], map: "uq_cat_subcat")
+}
+
+enum TipoActivo {
+  ACTIVO_FIJO
+  ACTIVO_CIRCULANTE
+}
+
+enum documentos_soporte_tipo_documento {
+  FACTURA
+  ORDEN_COMPRA
+  BOLETA
+  VALE
+}
+
+enum movimientos_tipo_movimiento {
+  ENTRADA
+  SALIDA
+  TRASPASO
+}

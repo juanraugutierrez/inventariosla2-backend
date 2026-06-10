@@ -1,0 +1,30 @@
+// src/server.js
+import express from 'express';
+import cors from 'cors';
+import { PrismaClient } from '@prisma/client';
+import { json } from 'express';
+
+// Se importa el router para los usuarios
+import authRoutes from './routes/authRoutes.js'; 
+
+const app = express();
+const prisma = new PrismaClient();
+const PORT = process.env.PORT || 4000;
+
+// Middleware
+app.use(cors());
+app.use(json());
+
+// Rutas de la API
+app.use('/api', authRoutes);
+
+// Iniciar el servidor
+app.listen(PORT, () => {
+  console.log(`Servidor Express corriendo en el puerto ${PORT}`);
+  console.log('API lista para recibir solicitudes.');
+});
+
+// Desconectar Prisma al cerrar la aplicación
+process.on('beforeExit', async () => {
+  await prisma.$disconnect();
+});
