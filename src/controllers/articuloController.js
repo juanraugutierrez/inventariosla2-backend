@@ -1,5 +1,18 @@
+// src/controllers/articuloController.js
 import prisma from '../config/prisma.js';
 import xlsx from 'xlsx'; // Importación necesaria para leer el Excel
+
+/**
+ * 🛠️ FUNCIÓN AUXILIAR DE NEGOCIO: DETERMINAR EL TIPO DE ACTIVO POR CATEGORÍA
+ * Regla Servilift: ID 8 (Consumibles, Lubricantes y Químicos) es CIRCULANTE. El resto es FIJO.
+ */
+const calcularTipoActivo = (categoriaId) => {
+    const id = parseInt(categoriaId);
+    if (id === 8) {
+        return 'ACTIVO_CIRCULANTE'; // Fluidos, paños, lubricantes (se extinguen)
+    }
+    return 'ACTIVO_FIJO'; // Herramientas, mangueras, motores (bienes durables / repuestos fijos)
+};
 
 /**
  * 1. LISTAR ARTÍCULOS CON RELACIONES E IMÁGENES
@@ -7,7 +20,10 @@ import xlsx from 'xlsx'; // Importación necesaria para leer el Excel
  */
 export const getArticulos = async (req, res) => {
     try {
-        const articulos = await prisma.articulo.findMany({
+        // Soporte flexible para el nombre del modelo mapeado por Prisma (articulos o articulo)
+        const modeloArticulo = prisma.articulo || prisma.articulos;
+        
+        const articulos = await modeloArticulo.findMany({
             include: {
                 stock_bodegas: true,
                 subcategorias: {
@@ -22,22 +38,30 @@ export const getArticulos = async (req, res) => {
             const registrosStock = art.stock_bodegas || [];
             const stockTotal = registrosStock.reduce((sum, f) => sum + (f.cantidad_unidades || 0), 0);
 
-            const subcatObjeto = art.subcategorias;
+            const subcatObjeto = art.subcategorias; 
             const catObjeto = subcatObjeto?.categorias;
+
+            // RECONVERSIÓN: Si es un Buffer binario de LONGBLOB, lo pasamos a texto Base64 para el front
+            let renderFoto = null;
+            if (art.url_foto && Buffer.isBuffer(art.url_foto)) {
+                renderFoto = art.url_foto.toString('utf8');
+            } else if (typeof art.url_foto === 'string') {
+                renderFoto = art.url_foto;
+            }
 
             return {
                 id: art.id,
                 codigo_sku: art.codigo_sku,
                 nombre: art.nombre,
                 descripcion: art.descripcion,
-                url_foto: art.url_foto, 
+                url_foto: renderFoto,
                 tipo_activo: art.tipo_activo,
                 precio_promedio: parseFloat(art.precio_promedio) || 0.00,
                 stock: stockTotal,
                 
-                // Mapeo unificado para posicionar los Selectores de React
                 subcategoria_id: art.subcategoria_id || subcatObjeto?.id || '',
                 subcategoria_nombre: subcatObjeto?.nombre || 'Sin Subcategoría',
+                subcategoria_codigo: subcatObjeto?.codigo_subcategoria || '01',
                 categoria_id: subcatObjeto?.categoria_id || catObjeto?.id || '',
                 categoria_nombre: catObjeto?.nombre || 'Sin Categoría'
             };
@@ -45,6 +69,7 @@ export const getArticulos = async (req, res) => {
 
         return res.json(respuesta);
     } catch (error) {
+        console.error("Error en getArticulos:", error);
         return res.status(500).json({ 
             error: 'Error crítico al procesar el catálogo relacional en MySQL', 
             details: error.message 
@@ -53,90 +78,142 @@ export const getArticulos = async (req, res) => {
 };
 
 /**
- * 2. CREAR NUEVO ARTÍCULO (COMPLETAMENTE PROTEGIDO CONTRA STRINGS VACÍOS)
+ * 2. CREAR NUEVO ARTÍCULO (BLINDADO CONTRA MODELOS UNDEFINED)
  * POST /api/productos
  */
 export const createArticulo = async (req, res) => {
     try {
-        const { codigo_sku, nombre, descripcion, url_foto, tipo_activo, precio_promedio, subcategoria_id } = req.body;
+        const { codigo_sku, nombre, descripcion, url_foto, precio_promedio, subcategoria_id } = req.body;
 
-        if (!codigo_sku || !nombre || !tipo_activo || !subcategoria_id) {
-            return res.status(400).json({ error: 'El SKU, nombre, clasificación contable y subcategoría son obligatorios.' });
+        if (!codigo_sku || !nombre || !subcategoria_id) {
+            return res.status(400).json({ error: 'Faltan campos obligatorios: SKU, Nombre o Subcategoria.' });
         }
 
-        // Conversión y saneamiento defensivo de tipos para MySQL en el Backend 🔑
-        const skuLimpio = String(codigo_sku).trim();
-        const nombreLimpio = String(nombre).trim();
-        const descLimpia = descripcion && String(descripcion).trim() ? String(descripcion).trim() : null;
-        const fotoLimpia = url_foto || null;
-        const precioParseado = precio_promedio && !isNaN(precio_promedio) ? parseFloat(precio_promedio) : 0.00;
         const subcatIdParseado = parseInt(subcategoria_id);
-
         if (isNaN(subcatIdParseado)) {
-            return res.status(400).json({ error: 'El ID de la subcategoría enviado no es un identificador numérico válido.' });
+            return res.status(400).json({ error: 'El ID de la subcategoria debe ser un numero valido.' });
         }
 
-        const nuevoArticulo = await prisma.articulo.create({
+        // 🔑 REFUERZO DE TOLERANCIA: Mapeo dinámico del modelo de subcategorías para evitar caídas por "undefined"
+        const modeloSubcategoria = prisma.subcategoria || prisma.subcategorias || prisma.Subcategoria;
+        const modeloArticulo = prisma.articulo || prisma.articulos || prisma.Articulo;
+
+        if (!modeloSubcategoria) {
+            return res.status(500).json({ error: 'El modelo Subcategoria no esta inicializado correctamente en el cliente de Prisma.' });
+        }
+
+        // Buscar la subcategoría correspondiente
+        const dbSubcategoria = await modeloSubcategoria.findUnique({
+            where: { id: subcatIdParseado }
+        });
+
+        if (!dbSubcategoria) {
+            return res.status(404).json({ error: 'La subcategoria seleccionada no existe en la base de datos.' });
+        }
+
+        const tipoActivoDeducido = calcularTipoActivo(dbSubcategoria.categoria_id);
+
+        // Almacenar Base64 como un Buffer de texto seguro para el LONGBLOB de MySQL
+        let blobFoto = null;
+        if (url_foto && typeof url_foto === 'string') {
+            blobFoto = Buffer.from(url_foto, 'utf8');
+        }
+
+        const nuevoArticulo = await modeloArticulo.create({
             data: {
-                codigo_sku: skuLimpio,
-                nombre: nombreLimpio,
-                descripcion: descLimpia,
-                url_foto: fotoLimpia, 
-                tipo_activo,
-                precio_promedio: precioParseado,
+                codigo_sku: String(codigo_sku).trim(),
+                nombre: String(nombre).trim(),
+                descripcion: descripcion && String(descripcion).trim() ? String(descripcion).trim() : null,
+                url_foto: blobFoto,
+                tipo_activo: tipoActivoDeducido,
+                precio_promedio: precio_promedio ? parseFloat(precio_promedio) : 0.00,
                 subcategoria_id: subcatIdParseado
             }
         });
 
         return res.status(201).json({ 
-            id: nuevoArticulo.id, 
-            message: 'Artículo catalogado correctamente en la base de datos MySQL.' 
+            id: nuevoArticulo.id,
+            message: 'Articulo catalogado y clasificado correctamente en MySQL.' 
         });
+
     } catch (error) {
+        console.error("🚨 Error capturado en createArticulo:", error);
         if (error.code === 'P2002') {
-            return res.status(400).json({ error: 'El código SKU ingresado ya se encuentra registrado en el sistema.' });
+            return res.status(400).json({ error: 'El codigo SKU generado ya existe para otro articulo en el sistema.' });
         }
-        return res.status(500).json({ error: 'Error al insertar el artículo en MySQL', details: error.message });
+        return res.status(400).json({ 
+            error: 'La base de datos MySQL rechazo la operacion.', 
+            details: error.message
+        });
     }
 };
 
 /**
- * 3. ACTUALIZAR ARTÍCULO COMPLETO 
+ * 3. ACTUALIZAR ARTÍCULO COMPLETO
  * PUT /api/productos/:id
  */
 export const updateArticulo = async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, descripcion, url_foto, tipo_activo, subcategoria_id } = req.body;
-
-        if (!nombre || !tipo_activo || !subcategoria_id) {
-            return res.status(400).json({ error: 'El nombre, tipo de activo y subcategoría son campos requeridos.' });
-        }
+        const { nombre, descripcion, url_foto, subcategoria_id } = req.body;
 
         const nuevoSubcatId = parseInt(subcategoria_id);
-        if (isNaN(nuevoSubcatId)) {
-            return res.status(400).json({ error: 'Subcategoría inválida.' });
+        const modeloSubcategoria = prisma.subcategoria || prisma.subcategorias || prisma.Subcategoria;
+        const modeloArticulo = prisma.articulo || prisma.articulos || prisma.Articulo;
+
+        const dbSubcategoria = await modeloSubcategoria.findUnique({
+            where: { id: nuevoSubcatId }
+        });
+
+        if (!dbSubcategoria) {
+            return res.status(404).json({ error: 'La subcategoría ingresada no existe.' });
         }
 
-        const actualizado = await prisma.articulo.update({
+        const tipoActivoDeducido = calcularTipoActivo(dbSubcategoria.categoria_id);
+
+        let blobFoto = null;
+        if (url_foto && typeof url_foto === 'string') {
+            blobFoto = Buffer.from(url_foto, 'utf8');
+        }
+
+        const actualizado = await modeloArticulo.update({
             where: { id: parseInt(id) },
             data: {
                 nombre: String(nombre).trim(),
                 descripcion: descripcion && String(descripcion).trim() ? String(descripcion).trim() : null,
-                url_foto: url_foto || null, 
-                tipo_activo,
+                url_foto: blobFoto, 
+                tipo_activo: tipoActivoDeducido, 
                 subcategoria_id: nuevoSubcatId
             }
         });
 
         return res.json({ message: 'Artículo modificado correctamente en MySQL.', actualizado });
     } catch (error) {
-        return res.status(500).json({ error: 'Error al actualizar con Prisma en MySQL', details: error.message });
+        return res.status(500).json({ error: 'Error al actualizar en MySQL', details: error.message });
     }
 };
 
 /**
- * 4. CARGA MASIVA DE ARTÍCULOS DESDE EXCEL
+ * 4. ELIMINAR ARTÍCULO DE FORMA FÍSICA
+ * DELETE /api/productos/:id
+ */
+export const deleteArticulo = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const modeloArticulo = prisma.articulo || prisma.articulos || prisma.Articulo;
+
+        const eliminado = await modeloArticulo.delete({
+            where: { id: parseInt(id) }
+        });
+
+        return res.json({ message: 'Artículo removido exitosamente del catálogo maestro de MySQL.', eliminado });
+    } catch (error) {
+        return res.status(500).json({ error: 'Fallo interno al intentar eliminar el registro de la base de datos.', details: error.message });
+    }
+};
+
+/**
+ * 5. CARGA MASIVA DE ARTÍCULOS DESDE EXCEL
  * POST /api/productos/cargar-masivo
  */
 export const cargarMasivoExcel = async (req, res) => {
@@ -145,9 +222,8 @@ export const cargarMasivoExcel = async (req, res) => {
             return res.status(400).json({ error: "No se ha adjuntado ningún archivo." });
         }
 
-        // Leer el archivo Excel desde la memoria (buffer)
         const workbook = xlsx.read(req.file.buffer, { type: "buffer" });
-        const sheetName = workbook.SheetNames[0]; // Toma la primera hoja
+        const sheetName = workbook.SheetNames[0]; 
         const sheet = workbook.Sheets[sheetName];
         const rows = xlsx.utils.sheet_to_json(sheet);
 
@@ -156,21 +232,30 @@ export const cargarMasivoExcel = async (req, res) => {
         }
 
         let articulosInsertados = 0;
-        const cacheSecuencias = {}; // Memoria temporal para manejar lotes grandes de la misma subcategoría
+        const cacheSecuencias = {}; 
+
+        const todasLasSubcategorias = await prisma.subcategoria.findMany();
+        const modeloArticulo = prisma.articulo || prisma.articulos || prisma.Articulo;
 
         for (const row of rows) {
-            // Se esperan estas columnas en el Excel: nombre, descripcion, precio_promedio, categoria_cod, subcategoria_cod, subcategoria_id, tipo_activo
-            const { nombre, descripcion, precio_promedio, categoria_cod, subcategoria_cod, subcategoria_id, tipo_activo, url_foto } = row;
+            const { nombre, descripcion, precio_promedio, subcategoria_id, url_foto } = row;
 
-            // Validaciones mínimas de estructura de negocio según tu modelo
-            if (!nombre || !categoria_cod || !subcategoria_cod || !subcategoria_id || !tipo_activo) {
-                continue; // Salta la fila si falta algún dato crítico
+            if (!nombre || !subcategoria_id) {
+                continue;
             }
 
-            // Construir prefijo del SKU (ej: SL0502)
-            const catStr = String(categoria_cod).padStart(2, "0");
-            const subCatStr = String(subcategoria_cod).padStart(2, "0");
-            const prefixSKU = `SL${catStr}${subCatStr}`;
+            const subcatIdActual = parseInt(subcategoria_id);
+            const subcatData = todasLasSubcategorias.find(s => s.id === subcatIdActual);
+            
+            if (!subcatData) {
+                continue;
+            }
+
+            const tipoActivoCalculado = calcularTipoActivo(subcatData.categoria_id);
+
+            const catStr = String(subcatData.categoria_id).padStart(2, "0");
+            const subCatStr = String(subcatData.codigo_subcategoria).padStart(2, "0");
+            const prefixSKU = `SLA${catStr}${subCatStr}`;
 
             let siguienteSecuencia = 1;
 
@@ -178,14 +263,13 @@ export const cargarMasivoExcel = async (req, res) => {
                 cacheSecuencias[prefixSKU]++;
                 siguienteSecuencia = cacheSecuencias[prefixSKU];
             } else {
-                // Consulta en base de datos al artículo con el código más alto para ese prefijo
-                const ultimoArticulo = await prisma.articulo.findFirst({
+                const ultimoArticulo = await modeloArticulo.findFirst({
                     where: { codigo_sku: { startsWith: prefixSKU } },
                     orderBy: { codigo_sku: "desc" },
                 });
 
-                if (ultimoArticulo && ultimoArticulo.codigo_sku) {
-                    const ultimaSecuenciaStr = ultimoArticulo.codigo_sku.substring(6);
+                if (ultimoArticulo && ultimoArticulo.codigo_sku && ultimoArticulo.codigo_sku.length === 11) {
+                    const ultimaSecuenciaStr = ultimoArticulo.codigo_sku.substring(7);
                     const seqParsed = parseInt(ultimaSecuenciaStr, 10);
                     if (!isNaN(seqParsed)) {
                         siguienteSecuencia = seqParsed + 1;
@@ -194,28 +278,30 @@ export const cargarMasivoExcel = async (req, res) => {
                 cacheSecuencias[prefixSKU] = siguienteSecuencia;
             }
 
-            // Convertir secuencia a 5 dígitos (ej: 00007) y combinar
-            const secuenciaStr = String(siguienteSecuencia).padStart(5, "0");
+            const secuenciaStr = String(siguienteSecuencia).padStart(4, "0");
             const skuFinal = `${prefixSKU}${secuenciaStr}`;
 
-            // Inserción en Prisma respetando los tipos de tu BD
-            await prisma.articulo.create({
+            let excelBlobFoto = null;
+            if (url_foto && typeof url_foto === 'string') {
+                excelBlobFoto = Buffer.from(url_foto, 'utf8');
+            }
+
+            await modeloArticulo.create({
                 data: {
                     codigo_sku: skuFinal,
                     nombre: String(nombre).trim(),
                     descripcion: descripcion ? String(descripcion).trim() : null,
-                    url_foto: url_foto || null,
-                    tipo_activo: String(tipo_activo).trim(),
+                    url_foto: excelBlobFoto,
+                    tipo_activo: tipoActivoCalculado,
                     precio_promedio: precio_promedio ? parseFloat(precio_promedio) : 0.00,
-                    subcategoria_id: parseInt(subcategoria_id)
+                    subcategoria_id: subcatIdActual
                 },
             });
 
             articulosInsertados++;
         }
 
-        return res.status(201).json({ count: articulosInsertados, message: "Carga masiva completada con éxito." });
-
+        return res.status(201).json({ count: articulosInsertados, message: "Carga masiva completada y clasificada con éxito." });
     } catch (error) {
         console.error("Error en la carga masiva:", error);
         return res.status(500).json({ error: "Ocurrió un error interno al procesar el Excel.", details: error.message });

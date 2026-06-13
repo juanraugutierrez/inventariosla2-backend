@@ -5,6 +5,7 @@ import {
     getArticulos, 
     createArticulo, 
     updateArticulo,
+    deleteArticulo, // 🔑 NUEVA IMPORTACIÓN
     cargarMasivoExcel 
 } from '../controllers/articuloController.js';
 
@@ -17,8 +18,9 @@ const upload = multer({ storage: multer.memoryStorage() });
 router.get('/', getArticulos);                           // GET /api/productos
 router.post('/', createArticulo);                        // POST /api/productos
 router.put('/:id', updateArticulo);                      // PUT /api/productos/:id
+router.delete('/:id', deleteArticulo);                  // 🔑 NUEVO: DELETE /api/productos/:id
 
 // Nueva ruta para la carga masiva (Atrapa el archivo y luego ejecuta el controlador)
-router.post('/cargar-masivo', upload.single('excelFile'), cargarMasivoExcel); 
+router.post('/cargar-masivo', upload.single('excelFile'), cargarMasivoExcel); //
 
 export default router;

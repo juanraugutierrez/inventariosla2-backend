@@ -1,96 +1,70 @@
 import prisma from '../config/prisma.js';
 
-/**
- * 1. LISTAR TODAS LAS BODEGAS CON SU VALORIZACIÓN O TOTAL DE SKUS
- * GET /api/bodegas
- */
 export const getBodegas = async (req, res) => {
     try {
-        // Traemos las bodegas e incluimos los registros de stock de artículos que contiene
-        const bodegas = await prisma.bodega.findMany({
-            include: {
-                stock_bodegas: true
-            },
-            orderBy: { nombre: 'asc' }
+        const bodegas = await prisma.bodega.findMany({ // <- Corregido a prisma.bodega
+            orderBy: { id: 'asc' }
         });
-
-        // Mapeamos para enviar datos planos e informativos al frontend de React
-        const respuesta = bodegas.map(b => {
-            const filasStock = b.stock_bodegas || [];
-            // Calculamos el total de unidades físicas almacenadas en esta bodega
-            const totalUnidades = filasStock.reduce((sum, item) => sum + (item.cantidad_unidades || 0), 0);
-            // Total de SKUs distintos mapeados en esta instalación
-            const totalSkus = filasStock.length;
-
-            return {
-                id: b.id,
-                nombre: b.nombre,
-                ubicacion: b.ubicacion || 'Sin dirección registrada',
-                total_unidades: totalUnidades,
-                total_skus: totalSkus
-            };
-        });
-
-        return res.json(respuesta);
+        return res.json(bodegas);
     } catch (error) {
-        return res.status(500).json({ 
-            error: 'Error al consultar el catálogo de bodegas en MySQL', 
-            details: error.message 
-        });
+        console.error("Error al obtener bodegas:", error);
+        return res.status(500).json({ error: 'Error al obtener bodegas', details: error.message });
     }
 };
 
-/**
- * 2. CREAR NUEVA BODEGA / INSTALACIÓN
- * POST /api/bodegas
- */
 export const createBodega = async (req, res) => {
     try {
-        const { nombre, ubicacion } = req.body;
+        const { nombre, direccion, es_central, responsable_id } = req.body;
 
         if (!nombre) {
-            return res.status(400).json({ error: 'El nombre de la bodega es mandatorio.' });
+            return res.status(400).json({ error: 'El nombre de la bodega es obligatorio.' });
         }
 
-        const nuevaBodega = await prisma.bodega.create({
+        const nueva = await prisma.bodega.create({
             data: {
-                nombre: nombre.trim(),
-                ubicacion: ubicacion && ubicacion.trim() ? ubicacion.trim() : null
+                nombre: String(nombre).trim(),
+                direccion: direccion ? String(direccion).trim() : null,
+                es_central: Boolean(es_central), // true para central, false para furgón
+                responsable_id: responsable_id ? parseInt(responsable_id) : null
             }
         });
-
-        return res.status(201).json({
-            id: nuevaBodega.id,
-            message: 'Bodega aperturada y registrada con éxito en MySQL.'
-        });
+        return res.status(201).json(nueva);
     } catch (error) {
-        return res.status(500).json({ error: 'Error al insertar la bodega', details: error.message });
+        console.error("Error al crear bodega:", error);
+        return res.status(500).json({ error: 'Error al crear la bodega', details: error.message });
     }
 };
 
-/**
- * 3. MODIFICAR ATRIBUTOS DE UNA BODEGA
- * PUT /api/bodegas/:id
- */
 export const updateBodega = async (req, res) => {
     try {
         const { id } = req.params;
-        const { nombre, ubicacion } = req.body;
-
-        if (!nombre) {
-            return res.status(400).json({ error: 'El nombre es un campo requerido.' });
-        }
+        const { nombre, direccion, es_central, responsable_id } = req.body;
 
         const actualizada = await prisma.bodega.update({
             where: { id: parseInt(id) },
             data: {
-                nombre: nombre.trim(),
-                ubicacion: ubicacion && ubicacion.trim() ? ubicacion.trim() : null
+                nombre: String(nombre).trim(),
+                direccion: direccion ? String(direccion).trim() : null,
+                es_central: Boolean(es_central),
+                responsable_id: responsable_id ? parseInt(responsable_id) : null
             }
         });
-
-        return res.json({ message: 'Instalación modificada correctamente.', actualizada });
+        return res.json(actualizada);
     } catch (error) {
-        return res.status(500).json({ error: 'Error al actualizar la bodega en MySQL', details: error.message });
+        console.error("Error al actualizar bodega:", error);
+        return res.status(500).json({ error: 'Error al actualizar bodega', details: error.message });
+    }
+};
+
+export const deleteBodega = async (req, res) => {
+    try {
+        const { id } = req.params;
+        await prisma.bodega.delete({
+            where: { id: parseInt(id) }
+        });
+        return res.json({ message: 'Bodega eliminada correctamente.' });
+    } catch (error) {
+        console.error("Error al eliminar bodega:", error);
+        return res.status(400).json({ error: 'No se puede eliminar. Verifica dependencias en base de datos.', details: error.message });
     }
 };

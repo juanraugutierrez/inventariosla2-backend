@@ -43,7 +43,7 @@ model Articulo {
   codigo_sku          String                @unique(map: "codigo_sku") @db.VarChar(50)
   nombre              String                @db.VarChar(150)
   descripcion         String?               @db.Text
-  url_foto            String?               @db.LongText
+  url_foto            Bytes?
   subcategoria_id     Int
   tipo_activo         TipoActivo
   precio_promedio     Decimal               @default(0.00) @db.Decimal(12, 2)
@@ -105,6 +105,9 @@ model documentos_soporte {
   numero_documento   String                            @db.VarChar(50)
   fecha_emision      DateTime                          @db.Date
   proveedor_o_emisor String?                           @db.VarChar(150)
+  monto_neto         Decimal                           @default(0.00) @db.Decimal(12, 2)
+  monto_iva          Decimal                           @default(0.00) @db.Decimal(12, 2)
+  monto_total        Decimal                           @default(0.00) @db.Decimal(12, 2)
   creado_en          DateTime?                         @default(now()) @db.Timestamp(0)
   movimientos        movimientos[]
 
@@ -114,10 +117,14 @@ model documentos_soporte {
 model movimientos {
   id                                             Int                         @id @default(autoincrement())
   tipo_movimiento                                movimientos_tipo_movimiento
+  motivo_operacion                               String?                     @db.VarChar(100)
+  folio_documento_salida                         String?                     @db.VarChar(50)
+  identificador_destino_externo                  String?                     @db.VarChar(150)
   bodega_origen_id                               Int?
   bodega_destino_id                              Int?
   documento_soporte_id                           Int?
   responsable_id                                 Int
+  quien_retira                                   String?                     @db.VarChar(150)
   fecha_movimiento                               DateTime?                   @default(now()) @db.Timestamp(0)
   observaciones                                  String?                     @db.Text
   detalle_movimientos                            detalle_movimientos[]
@@ -146,15 +153,17 @@ model stock_bodegas {
 }
 
 model subcategorias {
-  id           Int        @id @default(autoincrement())
-  categoria_id Int
-  nombre       String     @db.VarChar(100)
-  descripcion  String?    @db.Text
-  creado_en    DateTime?  @default(now()) @db.Timestamp(0)
-  articulos    Articulo[]
-  categorias   categorias @relation(fields: [categoria_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "subcategorias_ibfk_1")
+  id                  Int        @id @default(autoincrement())
+  categoria_id        Int
+  codigo_subcategoria String?    @db.VarChar(2)
+  nombre              String     @db.VarChar(100)
+  descripcion         String?    @db.Text
+  creado_en           DateTime?  @default(now()) @db.Timestamp(0)
+  articulos           Articulo[]
+  categorias          categorias @relation(fields: [categoria_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "subcategorias_ibfk_1")
 
   @@unique([categoria_id, nombre], map: "uq_cat_subcat")
+  @@unique([categoria_id, codigo_subcategoria], map: "uq_categoria_subcategoria")
 }
 
 enum TipoActivo {
@@ -162,15 +171,17 @@ enum TipoActivo {
   ACTIVO_CIRCULANTE
 }
 
+enum movimientos_tipo_movimiento {
+  ENTRADA
+  SALIDA
+  TRASPASO
+}
+
 enum documentos_soporte_tipo_documento {
   FACTURA
   ORDEN_COMPRA
   BOLETA
   VALE
-}
-
-enum movimientos_tipo_movimiento {
-  ENTRADA
-  SALIDA
-  TRASPASO
+  GUIA_DESPACHO
+  VALE_DEVOLUCION
 }

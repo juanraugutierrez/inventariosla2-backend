@@ -1,68 +1,54 @@
 import prisma from '../config/prisma.js';
 
-/**
- * LISTAR TODAS LAS CATEGORÍAS MADRE
- * GET /api/categorias
- */
 export const getCategorias = async (req, res) => {
     try {
-        // Consultamos de forma tolerante al modelo singular o plural de tu esquema
-        let listaCategorias = [];
-        try {
-            listaCategorias = await prisma.categorias.findMany({
-                orderBy: { nombre: 'asc' }
-            });
-        } catch (e) {
-            listaCategorias = await prisma.categoria.findMany({
-                orderBy: { nombre: 'asc' }
-            });
-        }
-
-        // Devolvemos el arreglo mapeado de forma limpia
-        const respuesta = listaCategorias.map(c => ({
-            id: c.id,
-            nombre: c.nombre
-        }));
-
-        return res.json(respuesta);
-    } catch (error) {
-        return res.status(500).json({ 
-            error: 'Error al obtener las categorías desde MySQL', 
-            details: error.message 
+        const categorias = await prisma.categorias.findMany({
+            orderBy: {
+                id: 'asc' // <- Cambiado para ordenar por ID ascendente (1, 2, 3...)
+            }
         });
+        return res.json(categorias);
+    } catch (error) {
+        return res.status(500).json({ error: 'Error al obtener categorías', details: error.message });
     }
 };
 
-/**
- * LISTAR TODAS LAS SUBCATEGORÍAS CON RELACIÓN DE DEPENDENCIA
- * GET /api/subcategorias
- */
-export const getSubcategorias = async (req, res) => {
+export const createCategoria = async (req, res) => {
     try {
-        let listaSubcategorias = [];
-        try {
-            listaSubcategorias = await prisma.subcategorias.findMany({
-                orderBy: { nombre: 'asc' }
-            });
-        } catch (e) {
-            listaSubcategorias = await prisma.subcategoria.findMany({
-                orderBy: { nombre: 'asc' }
-            });
-        }
+        const { nombre } = req.body;
+        if (!nombre || String(nombre).trim() === '') return res.status(400).json({ error: 'El nombre es obligatorio.' });
 
-        // Mapeamos asegurando que la propiedad de dependencia 'categoria_id' 
-        // viaje de forma explícita e idéntica a como la busca el frontend
-        const respuesta = listaSubcategorias.map(s => ({
-            id: s.id,
-            nombre: s.nombre,
-            categoria_id: s.categoria_id || s.categoriaId // Tolerancia a la convención de Prisma
-        }));
-
-        return res.json(respuesta);
-    } catch (error) {
-        return res.status(500).json({ 
-            error: 'Error al obtener las subcategorías desde MySQL', 
-            details: error.message 
+        const nuevaCategoria = await prisma.categorias.create({
+            data: { nombre: String(nombre).trim() }
         });
+        return res.status(201).json(nuevaCategoria);
+    } catch (error) {
+        if (error.code === 'P2002') return res.status(400).json({ error: 'Categoría duplicada.' });
+        return res.status(500).json({ error: 'Error interno', details: error.message });
+    }
+};
+
+export const updateCategoria = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { nombre } = req.body;
+        if (!nombre || String(nombre).trim() === '') return res.status(400).json({ error: 'Nombre vacío.' });
+
+        const actualizada = await prisma.categorias.update({
+            where: { id: parseInt(id) },
+            data: { nombre: String(nombre).trim() }
+        });
+        return res.json(actualizada);
+    } catch (error) {
+        return res.status(500).json({ error: 'Error al actualizar', details: error.message });
+    }
+};
+
+export const deleteCategoria = async (req, res) => {
+    try {
+        await prisma.categorias.delete({ where: { id: parseInt(req.params.id) } });
+        return res.json({ message: 'Eliminada correctamente.' });
+    } catch (error) {
+        return res.status(400).json({ error: 'No se puede eliminar. Revise dependencias.', details: error.message });
     }
 };
