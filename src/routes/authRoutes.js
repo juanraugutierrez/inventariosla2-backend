@@ -1,15 +1,15 @@
+// src/routes/authRoutes.js
 import { Router } from 'express';
 import { login } from '../controllers/authController.js';
 
 const router = Router();
 
 /**
- * ==============================================================================
- * ENDPOINT PÚBLICO: INICIO DE SESIÓN / LOGIN
- * ==============================================================================
- * Ruta real final mapeada por server.js: POST http://localhost:3000/api/auth/login
+ * @route   POST /api/auth/login
+ * @desc    Autenticar usuario y obtener permisos de acceso (RBAC)
+ * @access  Público
  */
 router.post('/login', login);
 
-// 🔑 CRÍTICO: Esta es la línea que le falta a tu archivo y que soluciona el error
+// 🚨 CORRECCIÓN CRÍTICA: Exportación por defecto obligatoria para que 'server.js' lo reconozca sin llaves
 export default router;

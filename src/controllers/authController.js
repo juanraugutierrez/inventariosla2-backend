@@ -1,70 +1,81 @@
+// src/controllers/authController.js
 import prisma from '../config/prisma.js';
-import jwt from 'jsonwebtoken';
 
-/**
- * INICIAR SESIÓN DE USUARIO
- * POST /api/auth/login
- */
 export const login = async (req, res) => {
+    const { email, password } = req.body;
+
+    if (!email || !password) {
+        return res.status(400).json({ error: 'El correo y la contraseña son requeridos.' });
+    }
+
     try {
-        const { email, password } = req.body;
-
-        // 1. Validar campos requeridos
-        if (!email || !password) {
-            return res.status(400).json({ error: 'El correo y la contraseña son obligatorios.' });
-        }
-
-        // 2. Buscar usuario en MySQL e incluir su perfil/rol relacional
-        const usuario = await prisma.usuario.findUnique({
-            where: { email: email.trim() },
-            include: { perfil: true }
+        // 1. Buscamos al usuario usando las relaciones exactas de tu schema.prisma
+        const usuarioDB = await prisma.usuario.findFirst({
+            where: { 
+                email: email.trim(),
+                activo: true // En tu schema está configurado como Boolean
+            }, 
+            include: {
+                perfil: { // 👈 Nombre exacto de la relación en tu modelo 'Usuario'
+                    include: {
+                        perfil_permiso: { // 👈 Nombre exacto en tu modelo 'Perfil'
+                            include: {
+                                permiso: true // 👈 Nombre exacto en tu modelo 'perfil_permiso'
+                            }
+                        }
+                    }
+                }
+            }
         });
 
-        // 3. Si el usuario no existe
-        if (!usuario) {
-            return res.status(401).json({ error: 'Las credenciales ingresadas no son válidas.' });
+        // 2. Si el correo no existe en la base de datos
+        if (!usuarioDB) {
+            return res.status(401).json({ error: 'El correo electrónico no está registrado o la cuenta está inactiva.' });
         }
 
-        // 4. Verificar si el usuario está activo en el sistema
-        if (!usuario.activo) {
-            return res.status(403).json({ error: 'Tu cuenta se encuentra suspendida. Contacta al administrador.' });
+        // 3. Validación de Contraseña usando 'password_hash' (tu propiedad real)
+        if (usuarioDB.password_hash !== password) { 
+            return res.status(401).json({ error: 'La contraseña ingresada es incorrecta.' });
         }
 
-        // 5. Validar contraseña (Comparación directa para tus semillas de datos actuales)
-        // Nota: En producción aquí usarías bcrypt.compareSync(password, usuario.password_hash)
-        if (password !== usuario.password_hash) {
-            return res.status(401).json({ error: 'Las credenciales ingresadas no son válidas.' });
+        // 4. Extracción dinámica de la matriz de permisos
+        let listaPermisosStrings = [];
+        
+        if (usuarioDB.perfil && usuarioDB.perfil.nombre === 'ADMINISTRADOR') {
+            // Bypass completo de privilegios para tu usuario principal
+            listaPermisosStrings = [
+                "VER_DASHBOARD", 
+                "VER_USUARIOS", 
+                "GESTIONAR_PERMISOS", 
+                "permiso_crear_bodega", 
+                "permiso_ingresar_stock", 
+                "permiso_retirar_stock", 
+                "permiso_ver_informes"
+            ];
+        } else if (usuarioDB.perfil && usuarioDB.perfil.perfil_permiso) {
+            // Mapeo seguro para Bodegueros y Técnicos basados en las filas de tu MySQL
+            listaPermisosStrings = usuarioDB.perfil.perfil_permiso
+                .filter(pp => pp.permiso) 
+                .map(pp => pp.permiso.codigo);
         }
 
-        // 6. Generar el Payload del JWT adaptado a tus middlewares existentes
-        const payload = {
-            id: usuario.id,
-            nombre: usuario.nombre_completo,
-            email: usuario.email,
-            perfil_id: usuario.perfil_id,
-            role: usuario.perfil?.nombre === 'Administrador General' ? 'ADMINISTRADOR_SISTEMA' : 'OPERARIO'
-        };
-
-        // 7. Firmar el Token usando la clave secreta de tu .env (caduca en 24 horas)
-        const token = jwt.sign(payload, process.env.JWT_SECRET || 'CLAVE_SECRETA_POR_DEFECTO', {
-            expiresIn: '24h'
-        });
-
-        // 8. Responder con el Token y la información limpia del usuario
-        return res.json({
-            message: 'Autenticación exitosa.',
-            token,
-            user: {
-                nombre: usuario.nombre_completo,
-                email: usuario.email,
-                rol: usuario.perfil?.nombre
+        // 5. Retornar payload de sesión limpio y estructurado al Frontend
+        res.json({
+            message: 'Autenticación exitosa',
+            usuario: {
+                id: usuarioDB.id,
+                nombre: usuarioDB.nombre_completo,
+                email: usuarioDB.email,
+                cargo: usuarioDB.perfil?.nombre || 'SIN_CARGO',
+                permisos: listaPermisosStrings  
             }
         });
 
     } catch (error) {
-        return res.status(500).json({
-            error: 'Error crítico en el proceso de autenticación',
-            details: error.message
+        console.error("❌ ERROR DETECTADO EN EL INICIO DE SESIÓN:", error);
+        res.status(500).json({ 
+            error: 'Error interno en el servidor al intentar validar credenciales.', 
+            details: error.message 
         });
     }
 };

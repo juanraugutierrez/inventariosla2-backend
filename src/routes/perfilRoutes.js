@@ -1,11 +1,26 @@
 // src/routes/perfilRoutes.js
 import { Router } from 'express';
-import { getPerfiles, createPerfil } from '../controllers/perfilController.js';
+import { 
+    getPerfiles, 
+    createPerfil, 
+    getPermisosMaestros, 
+    getPermisosDePerfil, 
+    guardarPermisosPerfil, 
+    updatePerfil, 
+    deletePerfil 
+} from '../controllers/perfilController.js';
 
 const router = Router();
 
-// Responderá a las solicitudes del catálogo de roles
-router.get('/', getPerfiles);   // GET http://localhost:4000/api/perfiles
-router.post('/', createPerfil); // POST http://localhost:4000/api/perfiles
+// Endpoints base del CRUD de Perfiles
+router.get('/', getPerfiles);
+router.post('/', createPerfil);
+router.put('/:id', updatePerfil);
+router.delete('/:id', deletePerfil);
+
+// Endpoints de la Matriz de Permisos
+router.get('/permisos', getPermisosMaestros);
+router.get('/:id/permisos', getPermisosDePerfil);
+router.post('/:id/permisos', guardarPermisosPerfil);
 
 export default router;

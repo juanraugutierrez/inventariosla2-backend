@@ -8,15 +8,12 @@ datasource db {
 }
 
 model Perfil {
-  id                     Int       @id @default(autoincrement())
-  nombre                 String    @unique(map: "nombre") @db.VarChar(50)
-  descripcion            String?   @db.VarChar(255)
-  permiso_crear_bodega   Boolean   @default(false)
-  permiso_ingresar_stock Boolean   @default(false)
-  permiso_retirar_stock  Boolean   @default(false)
-  permiso_ver_informes   Boolean   @default(false)
-  creado_en              DateTime? @default(now()) @db.Timestamp(0)
-  usuarios               Usuario[]
+  id             Int              @id @default(autoincrement())
+  nombre         String           @unique(map: "nombre") @db.VarChar(50)
+  descripcion    String?          @db.VarChar(255)
+  creado_en      DateTime?        @default(now()) @db.Timestamp(0)
+  perfil_permiso perfil_permiso[]
+  usuarios       Usuario[]
 
   @@map("perfiles")
 }
@@ -164,6 +161,33 @@ model subcategorias {
 
   @@unique([categoria_id, nombre], map: "uq_cat_subcat")
   @@unique([categoria_id, codigo_subcategoria], map: "uq_categoria_subcategoria")
+}
+
+model perfil {
+  id          Int       @id @default(autoincrement())
+  nombre      String    @unique(map: "nombre") @db.VarChar(100)
+  descripcion String?   @db.Text
+  creado_en   DateTime? @default(now()) @db.Timestamp(0)
+}
+
+model perfil_permiso {
+  perfil_id  Int
+  permiso_id Int
+  perfiles   Perfil  @relation(fields: [perfil_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_perfil_permiso_perfiles")
+  permiso    permiso @relation(fields: [permiso_id], references: [id], onDelete: Cascade, onUpdate: NoAction, map: "fk_perfil_permiso_permiso")
+
+  @@id([perfil_id, permiso_id])
+  @@index([permiso_id], map: "fk_perfil_permiso_permiso")
+}
+
+model permiso {
+  id             Int              @id @default(autoincrement())
+  codigo         String           @unique(map: "codigo") @db.VarChar(100)
+  nombre         String           @db.VarChar(100)
+  modulo         String           @db.VarChar(100)
+  descripcion    String?          @db.Text
+  creado_en      DateTime?        @default(now()) @db.Timestamp(0)
+  perfil_permiso perfil_permiso[]
 }
 
 enum TipoActivo {

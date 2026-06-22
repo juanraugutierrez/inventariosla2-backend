@@ -46,6 +46,18 @@ app.use('/api/subcategorias', subcategoriaRoutes);
 app.use('/api/inventario', inventarioRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 
+
+// app.use('/auth', authRoutes);
+// app.use('/users', userRoutes);
+// app.use('/bodegas', bodegaRoutes);
+// app.use('/productos', productoRoutes); 
+// app.use('/categorias', categoriaRoutes);
+// app.use('/transacciones', transaccionRoutes);
+// app.use('/perfiles', perfilRoutes); 
+// app.use('/subcategorias', subcategoriaRoutes);
+// app.use('/inventario', inventarioRoutes);
+// app.use('/dashboard', dashboardRoutes);
+
 // Iniciar el servidor
 app.listen(PORT, () => {
   console.log(`Servidor Express corriendo en el puerto ${PORT}`);
